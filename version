@@ -1,0 +1,5 @@
+I tested the scenario by providing the _action parameter as remove.
+The job executed successfully, and all 28 tables were loaded with data.
+However, I encountered an error related to hash crops in the logs.
+After this error, the count statistics of the table were not displayed.
+
