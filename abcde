@@ -1,0 +1,76 @@
+import pandas as pd
+import pyodbc
+from google.cloud import bigquery
+
+# ------------------- CONFIG -------------------
+# SQL Server Connection
+sql_server = 'YOUR_SQL_SERVER_NAME'
+sql_database = 'YOUR_DATABASE_NAME'
+sql_query = "SELECT * FROM [Trips].[dbo].[X1ArvestPostedTransaction]"
+
+# BigQuery Query
+bq_query = """
+SELECT * 
+FROM `prj-d-data-platform-4922.landing_trips.arvest_posted_transaction_falcon_error` 
+WHERE DATE(_PARTITIONTIME) = '2025-04-10'
+LIMIT 1000
+"""
+
+# Key column(s) for comparison
+key_columns = ["row_id"]  # <-- Replace with your actual key(s)
+
+# -------------------------------------------------
+
+# Step 1: Connect to BigQuery
+bq_client = bigquery.Client()
+df_bq = bq_client.query(bq_query).to_dataframe()
+
+# Step 2: Connect to SQL Server
+conn_str = (
+    fr"Driver={{ODBC Driver 17 for SQL Server}};"
+    fr"Server={sql_server};"
+    fr"Database={sql_database};"
+    fr"Trusted_Connection=yes;"
+)
+sql_conn = pyodbc.connect(conn_str)
+df_sql = pd.read_sql(sql_query, sql_conn)
+
+# Step 3: Align columns and sort
+df_bq = df_bq.sort_index(axis=1)
+df_sql = df_sql.sort_index(axis=1)
+
+# Step 4: Function to compare on key columns
+def compare_dataframes_on_keys(df1, df2, key_columns):
+    # Perform inner join on key(s)
+    merged_df = df1.merge(df2, on=key_columns, suffixes=('_bq', '_sql'), how='inner')
+    diff_rows = []
+
+    for col in df1.columns:
+        if col not in key_columns:
+            col_bq = col + "_bq"
+            col_sql = col + "_sql"
+
+            # Compare with null-safe logic
+            mismatch = merged_df[col_bq] != merged_df[col_sql]
+            mismatch = mismatch & ~(merged_df[col_bq].isna() & merged_df[col_sql].isna())
+
+            if mismatch.any():
+                temp_df = merged_df.loc[mismatch, key_columns + [col_bq, col_sql]]
+                temp_df["column_name"] = col
+                diff_rows.append(temp_df)
+
+    # Final diff report
+    if diff_rows:
+        final_diff = pd.concat(diff_rows)
+        final_diff = final_diff[key_columns + ["column_name", col_bq, col_sql]]
+        print("❌ Differences found on matching keys:")
+        print(final_diff)
+        final_diff.to_csv("key_based_diff.csv", index=False)
+    else:
+        print("✅ All matching key rows are identical!")
+
+# Step 5: Run comparison
+compare_dataframes_on_keys(df_bq, df_sql, key_columns)
+
+# Step 6: Clean up
+sql_conn.close()
