@@ -1,0 +1,49 @@
+import pandas as pd
+import pyodbc
+from google.cloud import bigquery
+from pandas._testing import assert_frame_equal
+
+# Step 1: Auto-authenticate to BigQuery
+bq_client = bigquery.Client()  # Assumes GOOGLE_APPLICATION_CREDENTIALS or gcloud auth is set
+
+# Step 2: Connect to SQL Server using Windows Authentication
+conn_str = (
+    r"Driver={ODBC Driver 17 for SQL Server};"
+    r"Server=YOUR_SERVER_NAME;"
+    r"Database=YOUR_DATABASE_NAME;"
+    r"Trusted_Connection=yes;"
+)
+sql_conn = pyodbc.connect(conn_str)
+
+# Step 3: Run two queries
+query1 = "SELECT * FROM dbo.table1"  # SQL Server table
+query2 = "SELECT * FROM dbo.table2"  # SQL Server table
+
+df1 = pd.read_sql(query1, sql_conn)
+df2 = pd.read_sql(query2, sql_conn)
+
+# Step 4: Clean & Align columns
+df1 = df1.sort_index(axis=1)
+df2 = df2.sort_index(axis=1)
+
+# Ensure both have same columns
+common_cols = df1.columns.intersection(df2.columns)
+df1 = df1[common_cols]
+df2 = df2[common_cols]
+
+# Step 5: Reset index (no key matching needed)
+df1 = df1.reset_index(drop=True)
+df2 = df2.reset_index(drop=True)
+
+# Step 6: Compare DataFrames row-wise
+comparison_result = df1.compare(df2, keep_shape=True, keep_equal=False)
+
+# Step 7: Show differences
+if not comparison_result.empty:
+    print("❌ Differences found between the tables:")
+    print(comparison_result)
+else:
+    print("✅ No differences found. Tables match!")
+
+# Optional: Save the diff
+comparison_result.to_csv("diff_output.csv", index=False)
