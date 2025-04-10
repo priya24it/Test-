@@ -1,0 +1,8 @@
+# Step 3.5: Normalize datetime columns in both dataframes (e.g. 'ptDate')
+datetime_keys = ['ptDate']  # Add other datetime keys if needed
+
+for col in datetime_keys:
+    if col in df_bq.columns:
+        df_bq[col] = pd.to_datetime(df_bq[col]).dt.tz_localize(None)
+    if col in df_sql.columns:
+        df_sql[col] = pd.to_datetime(df_sql[col]).dt.tz_localize(None)
