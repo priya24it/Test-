@@ -1,0 +1,10 @@
+I wanted to clarify how data is landing in BigQuery partitions based on our Cloud Scheduler job setup.
+
+Our Cloud Run Scheduler job is configured to run at 5:00 AM UTC. Since BigQuery partitions based on ingestion time (in UTC) when using _PARTITIONTIME, here’s what happens:
+	•	All streaming data ingested before 5:00 AM UTC (e.g., from midnight to 4:59 AM UTC) on April 10 will fall into the April 10 partition.
+	•	The scheduled job at 5:00 AM UTC also writes into the April 10 partition.
+	•	So both early streaming data and the scheduled job data share the same _PARTITIONTIME.
+
+I’ve attached an Excel sheet that shows this behavior in a timeline format to make things easier to follow.
+
+Let me know if we should consider switching to partitioning by an event date field for more control over data grouping.
