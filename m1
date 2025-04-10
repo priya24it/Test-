@@ -1,0 +1,61 @@
+{% macro compare_latest_partition_mapped(table_mapping) %}
+  {% for source_table, target_table in table_mapping.items() %}
+    WITH target_filtered AS (
+      SELECT *
+      FROM {{ source('landing_trips_t1', target_table) }}
+    ),
+    source_filtered AS (
+      SELECT *
+      FROM {{ source('landing_trips_t1', source_table) }}
+    )
+
+    -- 5. Compare filtered tables using common columns
+    SELECT
+      '{{ source_table }}' AS source_table_name,
+      '{{ target_table }}' AS target_table_name,
+      s.row_id,
+      t.row_id,
+      {% for col in common_cols %}
+        CASE
+          WHEN LOWER(CAST(s.{{ col }} AS STRING)) IS DISTINCT FROM LOWER(CAST(t.{{ col }} AS STRING))
+            AND NOT (
+              (s.{{ col }} IS NULL AND t.{{ col }} IS NULL)
+              OR (LOWER(CAST(s.{{ col }} AS STRING)) = 'false' AND LOWER(CAST(t.{{ col }} AS STRING)) = 'false')
+              OR (LOWER(CAST(s.{{ col }} AS STRING)) = 'true' AND LOWER(CAST(t.{{ col }} AS STRING)) = 'true')
+            )
+          THEN s.{{ col }}
+          ELSE NULL
+        END AS source_{{ col }},
+
+        CASE
+          WHEN LOWER(CAST(s.{{ col }} AS STRING)) IS DISTINCT FROM LOWER(CAST(t.{{ col }} AS STRING))
+            AND NOT (
+              (s.{{ col }} IS NULL AND t.{{ col }} IS NULL)
+              OR (LOWER(CAST(s.{{ col }} AS STRING)) = 'false' AND LOWER(CAST(t.{{ col }} AS STRING)) = 'false')
+              OR (LOWER(CAST(s.{{ col }} AS STRING)) = 'true' AND LOWER(CAST(t.{{ col }} AS STRING)) = 'true')
+            )
+          THEN t.{{ col }}
+          ELSE NULL
+        END AS target_{{ col }}
+        {% if not loop.last %},{% endif %}
+      {% endfor %}
+    FROM source_filtered s
+    INNER JOIN target_filtered t
+      ON s.row_id = t.row_id
+    WHERE
+      (
+        {% for col in common_cols %}
+          (
+            LOWER(CAST(s.{{ col }} AS STRING)) IS DISTINCT FROM LOWER(CAST(t.{{ col }} AS STRING))
+            AND NOT (
+              (s.{{ col }} IS NULL AND t.{{ col }} IS NULL)
+              OR (LOWER(CAST(s.{{ col }} AS STRING)) = 'false' AND LOWER(CAST(t.{{ col }} AS STRING)) = 'false')
+              OR (LOWER(CAST(s.{{ col }} AS STRING)) = 'true' AND LOWER(CAST(t.{{ col }} AS STRING)) = 'true')
+            )
+          )
+          {% if not loop.last %} OR {% endif %}
+        {% endfor %}
+      )
+    LIMIT 5
+  {% endfor %}
+{% endmacro %}
