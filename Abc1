@@ -1,0 +1,63 @@
+import pyodbc
+import pandas as pd
+
+def get_primary_keys(server: str, database: str) -> pd.DataFrame:
+    """
+    Connects to SQL Server and retrieves primary key columns for all tables
+    using INFORMATION_SCHEMA views.
+
+    Parameters:
+        server (str): SQL Server name
+        database (str): Database name
+
+    Returns:
+        pd.DataFrame: Primary key metadata (table name, column name, constraint)
+    """
+    try:
+        # Establish connection using Windows Authentication
+        conn_str = (
+            f"Driver={{ODBC Driver 17 for SQL Server}};"
+            f"Server={server};"
+            f"Database={database};"
+            f"Trusted_Connection=yes;"
+        )
+        conn = pyodbc.connect(conn_str)
+
+        # SQL to get primary key columns
+        pk_query = """
+            SELECT 
+                kcu.TABLE_SCHEMA,
+                kcu.TABLE_NAME,
+                kcu.COLUMN_NAME,
+                kcu.CONSTRAINT_NAME
+            FROM INFORMATION_SCHEMA.TABLE_CONSTRAINTS tc
+            JOIN INFORMATION_SCHEMA.KEY_COLUMN_USAGE kcu
+                ON tc.CONSTRAINT_NAME = kcu.CONSTRAINT_NAME
+                AND tc.TABLE_NAME = kcu.TABLE_NAME
+                AND tc.TABLE_SCHEMA = kcu.TABLE_SCHEMA
+            WHERE tc.CONSTRAINT_TYPE = 'PRIMARY KEY'
+            ORDER BY kcu.TABLE_NAME, kcu.ORDINAL_POSITION
+        """
+
+        df = pd.read_sql(pk_query, conn)
+        conn.close()
+
+        print("✅ Primary key metadata retrieved successfully.")
+        return df
+
+    except Exception as e:
+        print(f"❌ Error retrieving primary keys: {e}")
+        return pd.DataFrame()
+
+
+# ---------- Run the function ----------
+if __name__ == "__main__":
+    # Replace with your SQL Server details
+    server_name = "YOUR_SQL_SERVER_NAME"
+    database_name = "YOUR_DATABASE_NAME"
+
+    pk_info = get_primary_keys(server=server_name, database=database_name)
+    print(pk_info)
+
+    # Optional: save to CSV
+    pk_info.to_csv("primary_keys_info.csv", index=False)
