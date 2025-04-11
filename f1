@@ -1,0 +1,137 @@
+import pandas as pd
+import pyodbc
+from google.cloud import bigquery
+
+
+def get_primary_key_columns(server, database, schema, table):
+    """
+    Returns list of primary key columns and datetime keys.
+    """
+    conn_str = (
+        f"Driver={{ODBC Driver 17 for SQL Server}};"
+        f"Server={server};"
+        f"Database={database};"
+        f"Trusted_Connection=yes;"
+    )
+
+    pk_query = f"""
+    SELECT 
+        kcu.COLUMN_NAME,
+        c.DATA_TYPE
+    FROM INFORMATION_SCHEMA.TABLE_CONSTRAINTS tc
+    JOIN INFORMATION_SCHEMA.KEY_COLUMN_USAGE kcu
+        ON tc.CONSTRAINT_NAME = kcu.CONSTRAINT_NAME
+        AND tc.TABLE_NAME = kcu.TABLE_NAME
+        AND tc.TABLE_SCHEMA = kcu.TABLE_SCHEMA
+    JOIN INFORMATION_SCHEMA.COLUMNS c
+        ON c.TABLE_NAME = kcu.TABLE_NAME
+        AND c.COLUMN_NAME = kcu.COLUMN_NAME
+        AND c.TABLE_SCHEMA = kcu.TABLE_SCHEMA
+    WHERE tc.CONSTRAINT_TYPE = 'PRIMARY KEY'
+      AND kcu.TABLE_NAME = '{table}'
+      AND kcu.TABLE_SCHEMA = '{schema}'
+    ORDER BY kcu.ORDINAL_POSITION
+    """
+
+    conn = pyodbc.connect(conn_str)
+    df = pd.read_sql(pk_query, conn)
+    conn.close()
+
+    if df.empty:
+        raise ValueError("No primary key found for the table.")
+
+    key_columns = df["COLUMN_NAME"].tolist()
+    datetime_keys = df[df["DATA_TYPE"].isin(["datetime", "datetime2", "smalldatetime", "date"])]["COLUMN_NAME"].tolist()
+
+    return key_columns, datetime_keys
+
+
+def normalize_datetime_keys(df, datetime_keys):
+    for col in datetime_keys:
+        if col in df.columns:
+            df[col] = pd.to_datetime(df[col], errors='coerce').dt.date
+    return df
+
+
+def compare_dataframes_on_keys(df1, df2, key_columns):
+    """
+    Compare two dataframes on key columns, return differences.
+    """
+    merged_df = df1.merge(df2, on=key_columns, suffixes=('_bq', '_sql'), how='inner')
+    merged_df.to_csv("merged_df.csv", index=False)  # optional debugging
+
+    diff_rows = []
+
+    for col in df1.columns:
+        if col not in key_columns:
+            col_bq = col + "_bq"
+            col_sql = col + "_sql"
+
+            if col_bq not in merged_df.columns or col_sql not in merged_df.columns:
+                continue
+
+            mismatch = merged_df[col_bq] != merged_df[col_sql]
+            mismatch = mismatch & ~(merged_df[col_bq].isna() & merged_df[col_sql].isna())
+
+            if mismatch.any():
+                available_keys = [k for k in key_columns if k in merged_df.columns]
+                temp_df = merged_df.loc[mismatch, available_keys + [col_bq, col_sql]].copy()
+                temp_df["column_name"] = col
+                diff_rows.append(temp_df)
+
+    if diff_rows:
+        final_diff = pd.concat(diff_rows)
+        print("❌ Differences found:")
+        print(final_diff)
+        final_diff.to_csv("key_based_diff.csv", index=False)
+    else:
+        print("✅ All matching rows are identical.")
+
+
+# ---------------------- MAIN ----------------------
+
+# --- CONFIG ---
+sql_server = "YOUR_SQL_SERVER"
+sql_database = "YOUR_DATABASE"
+sql_schema = "dbo"
+sql_table = "X1ArvestPostedTransaction"
+
+bq_project_table = "prj-d-data-platform-4922.landing_trips.arvest_posted_transaction_falcon_error"
+bq_partition_date = "2025-04-10"
+# --------------
+
+# Step 1: Get PKs and datetime keys
+key_columns, datetime_keys = get_primary_key_columns(
+    sql_server, sql_database, sql_schema, sql_table
+)
+
+# Step 2: Load from SQL Server
+conn_str = (
+    f"Driver={{ODBC Driver 17 for SQL Server}};"
+    f"Server={sql_server};"
+    f"Database={sql_database};"
+    f"Trusted_Connection=yes;"
+)
+sql_conn = pyodbc.connect(conn_str)
+df_sql = pd.read_sql(f"SELECT * FROM [{sql_schema}].[{sql_table}]", sql_conn)
+sql_conn.close()
+
+# Step 3: Load from BigQuery
+bq_client = bigquery.Client()
+bq_query = f"""
+SELECT * 
+FROM `{bq_project_table}`
+WHERE DATE(_PARTITIONTIME) = '{bq_partition_date}'
+"""
+df_bq = bq_client.query(bq_query).to_dataframe()
+
+# Step 4: Normalize datetime keys
+df_sql = normalize_datetime_keys(df_sql, datetime_keys)
+df_bq = normalize_datetime_keys(df_bq, datetime_keys)
+
+# Step 5: Sort columns for consistency
+df_sql = df_sql.sort_index(axis=1)
+df_bq = df_bq.sort_index(axis=1)
+
+# Step 6: Compare and output
+compare_dataframes_on_keys(df_bq, df_sql, key_columns)
