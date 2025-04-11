@@ -1,0 +1,4 @@
+df_bq['ptDate_key'] = pd.to_datetime(df_bq['ptDate']).dt.date
+df_sql['ptDate_key'] = pd.to_datetime(df_sql['ptDate']).dt.date
+
+key_columns = ['ptDate_key']
