@@ -1,0 +1,1 @@
+temp_df["diff"] = temp_df[col_bq].astype(str) + " != " + temp_df[col_sql].astype(str)
